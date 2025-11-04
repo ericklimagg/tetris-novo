@@ -23,12 +23,13 @@ public class Piece {
     }
 
     public void setShape(Shape.Tetrominoe shape) {
+        // ####################################################################
+        // CORREÇÃO: Usa a tabela estática de Shape.java em vez de uma local.
+        // ####################################################################
         int[][][] coordsTable = Shape.getCoordsTable();
 
         for (int i = 0; i < 4; i++) {
-            for (int j = 0; j < 2; ++j) {
-                coords[i][j] = coordsTable[shape.ordinal()][i][j];
-            }
+            System.arraycopy(coordsTable[shape.ordinal()][i], 0, this.coords[i], 0, 2);
         }
         pieceShape = shape;
     }

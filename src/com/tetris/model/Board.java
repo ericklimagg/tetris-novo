@@ -95,8 +95,6 @@ public class Board {
         }
 
         currentPiece = nextPiece;
-        nextPiece = new Piece(); //NOVO
-        nextPiece.setRandomShape(); //NOVO
         currentPiece.setX(BOARD_WIDTH / 2);
         currentPiece.setY(BOARD_HEIGHT - 1 + currentPiece.minY());
         

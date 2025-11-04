@@ -1,14 +1,16 @@
 package com.tetris.controller;
 
+import com.tetris.audio.AudioManager;
 import com.tetris.model.Board;
 import com.tetris.model.Theme;
 import com.tetris.view.GameFrame;
-import com.tetris.audio.AudioManager; // <<<--- 1. IMPORT ADICIONADO
 import javax.swing.Timer;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * O Controller no padrão MVC.
@@ -28,7 +30,9 @@ public class GameController extends KeyAdapter implements ActionListener {
     private final Board board1; 
     private final Board board2; 
     private final Timer timer;
-    private final AudioManager backgroundMusic; // <<<--- 2. CAMPO ADICIONADO
+    private final AudioManager audioManager;
+    private final Set<Integer> pressedKeys;
+    private final Set<Integer> singlePressKeys;
 
     private int currentThemeIndex = 0;
     private GameMode currentGameMode = GameMode.ONE_PLAYER;
@@ -43,15 +47,12 @@ public class GameController extends KeyAdapter implements ActionListener {
         this.board2 = board2;
         
         this.timer = new Timer(GAME_LOOP_DELAY, this);
+        this.pressedKeys = new HashSet<>();
+        this.singlePressKeys = new HashSet<>();
         
+        this.audioManager = new AudioManager("/com/tetris/audio/background-music.wav");
         this.gameFrame.getGamePanel().addKeyListener(this);
         this.gameFrame.getGamePanel().setFocusable(true);
-
-        // <<<--- 3. ÁUDIO INICIALIZADO (USE O .wav, NÃO O .mp3)
-        // O caminho "sujo" (com src/) é intencional, pois o AudioManager.java
-        // que eu fiz está programado para limpar esse path.
-        System.out.println("GameController: Tentando inicializar o AudioManager...");
-        this.backgroundMusic = new AudioManager("src/com/tetris/audio/background-music.wav");
     }
 
     public void start() {
@@ -106,15 +107,129 @@ public class GameController extends KeyAdapter implements ActionListener {
         if (p1_over && p2_over) {
             if (timer.isRunning()) {
                 timer.stop();
-                
-                // <<<--- 5. PARAR A MÚSICA NO GAME OVER
-                if (backgroundMusic != null) {
-                    backgroundMusic.stopMusic();
-                }
+                audioManager.stopMusic();
             }
         }
         
+        handleInput();
         updateView();
+    }
+
+    private void handleInput() {
+        boolean isGameActive = board1.isStarted() || board2.isStarted();
+
+        // --- LÓGICA DE REINÍCIO (ENTER) ---
+        boolean p1_finished = !board1.isStarted() || board1.isGameOver();
+        boolean p2_finished = (currentGameMode == GameMode.ONE_PLAYER) || !board2.isStarted() || board2.isGameOver();
+
+        if (p1_finished && p2_finished && isSinglePress(KeyEvent.VK_ENTER)) {
+            currentGameMode = (menuSelection == 0) ? GameMode.ONE_PLAYER : GameMode.TWO_PLAYER;
+            gameFrame.getGamePanel().setMode(currentGameMode);
+            gameFrame.packAndCenter();
+
+            board1.start();
+            if (currentGameMode == GameMode.TWO_PLAYER) {
+                board2.start();
+            }
+
+            if (!timer.isRunning()) {
+                timer.start();
+            }
+            long startTime = System.currentTimeMillis();
+            lastPieceMoveTime1 = startTime;
+            lastPieceMoveTime2 = startTime;
+            audioManager.playMusic();
+            return;
+        }
+
+        // --- LÓGICA DE PRÉ-JOGO (Seleção de Modo) ---
+        if (!isGameActive) {
+            if (isSinglePress(KeyEvent.VK_UP) || isSinglePress(KeyEvent.VK_W)) {
+                menuSelection = 0; // 1P
+            }
+            if (isSinglePress(KeyEvent.VK_DOWN) || isSinglePress(KeyEvent.VK_S)) {
+                menuSelection = 1; // 2P
+            }
+        }
+
+        // --- TECLAS GLOBAIS (Pausa, Tema, Ghost) ---
+        if (isSinglePress(KeyEvent.VK_T)) {
+            currentThemeIndex = (currentThemeIndex + 1) % Theme.AVAILABLE_THEMES.length;
+        }
+        
+        if (isSinglePress(KeyEvent.VK_G)) {
+            board1.toggleGhostPiece();
+            if (currentGameMode == GameMode.TWO_PLAYER) board2.toggleGhostPiece();
+        }
+        
+        if (isSinglePress(KeyEvent.VK_P)) {
+            if (isGameActive && (!board1.isGameOver() || (currentGameMode == GameMode.TWO_PLAYER && !board2.isGameOver()))) {
+                 board1.togglePause();
+                 board2.togglePause(); 
+                
+                 if (!board1.isPaused()) {
+                    long currentTime = System.currentTimeMillis();
+                    lastPieceMoveTime1 = currentTime;
+                    lastPieceMoveTime2 = currentTime;
+                 }
+            }
+        }
+
+        // --- Controles de Jogo ---
+        boolean p1_canPlay = board1.isStarted() && !board1.isGameOver() && !board1.isPaused() && !board1.isAnimatingLineClear();
+        boolean p2_canPlay = (currentGameMode == GameMode.TWO_PLAYER) && 
+                             board2.isStarted() && !board2.isGameOver() && !board2.isPaused() && !board2.isAnimatingLineClear();
+
+        // Modo 1P: Controles Padrão
+        if (currentGameMode == GameMode.ONE_PLAYER && p1_canPlay) {
+            if (pressedKeys.contains(KeyEvent.VK_LEFT)) board1.moveLeft();
+            if (pressedKeys.contains(KeyEvent.VK_RIGHT)) board1.moveRight();
+            if (pressedKeys.contains(KeyEvent.VK_DOWN)) {
+                board1.movePieceDown();
+                lastPieceMoveTime1 = System.currentTimeMillis();
+            }
+            if (isSinglePress(KeyEvent.VK_UP)) board1.rotateRight();
+            if (isSinglePress(KeyEvent.VK_Z)) board1.rotateLeft();
+            if (isSinglePress(KeyEvent.VK_SPACE)) {
+                board1.dropDown();
+                lastPieceMoveTime1 = System.currentTimeMillis();
+            }
+        }
+
+        // Modo 2P: Controles Separados
+        if (currentGameMode == GameMode.TWO_PLAYER) {
+            // --- Jogador 1 (W, A, S, D, Q, ESPAÇO) ---
+            if (p1_canPlay) {
+                if (pressedKeys.contains(KeyEvent.VK_A)) board1.moveLeft();
+                if (pressedKeys.contains(KeyEvent.VK_D)) board1.moveRight();
+                if (pressedKeys.contains(KeyEvent.VK_S)) {
+                    board1.movePieceDown();
+                    lastPieceMoveTime1 = System.currentTimeMillis();
+                }
+                if (isSinglePress(KeyEvent.VK_W)) board1.rotateRight();
+                if (isSinglePress(KeyEvent.VK_Q)) board1.rotateLeft();
+                if (isSinglePress(KeyEvent.VK_SPACE)) {
+                    board1.dropDown();
+                    lastPieceMoveTime1 = System.currentTimeMillis();
+                }
+            }
+
+            // --- Jogador 2 (SETAS, UP, M, N) ---
+            if (p2_canPlay) {
+                if (pressedKeys.contains(KeyEvent.VK_LEFT)) board2.moveLeft();
+                if (pressedKeys.contains(KeyEvent.VK_RIGHT)) board2.moveRight();
+                if (pressedKeys.contains(KeyEvent.VK_DOWN)) {
+                    board2.movePieceDown();
+                    lastPieceMoveTime2 = System.currentTimeMillis();
+                }
+                if (isSinglePress(KeyEvent.VK_UP)) board2.rotateRight();
+                if (isSinglePress(KeyEvent.VK_M)) board2.rotateLeft();
+                if (isSinglePress(KeyEvent.VK_N)) {
+                    board2.dropDown();
+                    lastPieceMoveTime2 = System.currentTimeMillis();
+                }
+            }
+        }
     }
 
     /**
@@ -122,19 +237,19 @@ public class GameController extends KeyAdapter implements ActionListener {
      */
     private void handlePlayerLogic(Board board, long currentTime, long lastMoveTime, long delay) {
         if (board.isGameOver()) {
-            return; 
+            return;
         }
         
         if (board.isAnimatingLineClear()) {
             board.decrementLineClearTimer();
-            
+
             if (board.getLineClearTimer() <= 0) {
-                board.finishLineClear(); 
+                board.finishLineClear();
                 if (!board.isGameOver()) {
                     board.newPiece();
                 }
             }
-            return; 
+            return;
         }
 
         if (board.isStarted() && !board.isPaused()) {
@@ -153,7 +268,7 @@ public class GameController extends KeyAdapter implements ActionListener {
         gameFrame.getGamePanel().getBoardPanel2().updateBoard(board2);
         gameFrame.getGamePanel().getInfoPanel2().updateInfo(board2);
         gameFrame.getGamePanel().getGarbageBar2().updateBoard(board2);
-        
+
         // Passa a seleção do menu para o Overlay
         gameFrame.getOverlayPanel().updateBoards(board1, board2, currentGameMode, menuSelection);
 
@@ -165,186 +280,21 @@ public class GameController extends KeyAdapter implements ActionListener {
 
     @Override
     public void keyPressed(KeyEvent e) {
-        int keycode = e.getKeyCode();
-        
-        boolean isGameActive = board1.isStarted() || board2.isStarted();
-        
-        // --- LÓGICA DE REINÍCIO (ENTER) ---
-        // Verifica se o jogo ACABOU (ambos os jogadores, ou 1P)
-        boolean p1_finished = !board1.isStarted() || board1.isGameOver();
-        boolean p2_finished = (currentGameMode == GameMode.ONE_PLAYER) || !board2.isStarted() || board2.isGameOver();
+        pressedKeys.add(e.getKeyCode());
+    }
 
-        if (p1_finished && p2_finished && keycode == KeyEvent.VK_ENTER) {
-            // Configura a UI ANTES de iniciar os tabuleiros
-            currentGameMode = (menuSelection == 0) ? GameMode.ONE_PLAYER : GameMode.TWO_PLAYER;
-            gameFrame.getGamePanel().setMode(currentGameMode);
-            gameFrame.packAndCenter(); 
-            
-            // Inicia os tabuleiros necessários
-            board1.start();
-            if (currentGameMode == GameMode.TWO_PLAYER) {
-                board2.start();
-            }
+    @Override
+    public void keyReleased(KeyEvent e) {
+        pressedKeys.remove(e.getKeyCode());
+        singlePressKeys.remove(e.getKeyCode());
+    }
 
-            // <<<--- 4. TOCAR A MÚSICA AO INICIAR
-            if (backgroundMusic != null) {
-                backgroundMusic.playMusic();
-            }
-
-            if (!timer.isRunning()) {
-                timer.start();
-            }
-            long startTime = System.currentTimeMillis();
-            lastPieceMoveTime1 = startTime; 
-            lastPieceMoveTime2 = startTime;
-            updateView();
-            return;
+    private boolean isSinglePress(int keyCode) {
+        if (pressedKeys.contains(keyCode) && !singlePressKeys.contains(keyCode)) {
+            singlePressKeys.add(keyCode);
+            return true;
         }
-
-
-        // --- LÓGICA DE PRÉ-JOGO (Seleção de Modo) ---
-        if (!isGameActive) {
-            if (keycode == KeyEvent.VK_UP || keycode == KeyEvent.VK_W) {
-                menuSelection = 0; // 1P
-                updateView();
-                return;
-            }
-            if (keycode == KeyEvent.VK_DOWN || keycode == KeyEvent.VK_S) {
-                menuSelection = 1; // 2P
-                updateView();
-                return;
-            }
-        }
-
-        // --- TECLAS GLOBAIS (Pausa, Tema, Ghost) ---
-        if (keycode == KeyEvent.VK_T) {
-            currentThemeIndex = (currentThemeIndex + 1) % Theme.AVAILABLE_THEMES.length;
-            updateView();
-            return;
-        }
-        
-        if (keycode == KeyEvent.VK_G) {
-            board1.toggleGhostPiece();
-            if (currentGameMode == GameMode.TWO_PLAYER) board2.toggleGhostPiece();
-            updateView();
-            return;
-        }
-        
-        if (keycode == KeyEvent.VK_P) {
-            // Só pausa se o jogo estiver ativo
-            if (isGameActive && (!board1.isGameOver() || (currentGameMode == GameMode.TWO_PLAYER && !board2.isGameOver()))) {
-                 board1.togglePause();
-                 board2.togglePause(); 
-
-                 // <<<--- 6. PAUSAR/RETOMAR A MÚSICA
-                 if (backgroundMusic != null) {
-                     if (board1.isPaused()) {
-                         backgroundMusic.stopMusic();
-                     } else {
-                         backgroundMusic.playMusic();
-                     }
-                 }
-                
-                 if (!board1.isPaused()) {
-                    long currentTime = System.currentTimeMillis();
-                    lastPieceMoveTime1 = currentTime;
-                    lastPieceMoveTime2 = currentTime;
-                 }
-                 updateView();
-            }
-            return;
-        }
-
-        // --- Controles de Jogo ---
-        
-        boolean p1_canPlay = board1.isStarted() && !board1.isGameOver() && !board1.isPaused() && !board1.isAnimatingLineClear();
-        boolean p2_canPlay = (currentGameMode == GameMode.TWO_PLAYER) && 
-                             board2.isStarted() && !board2.isGameOver() && !board2.isPaused() && !board2.isAnimatingLineClear();
-
-        // Modo 1P: Controles Padrão
-        if (currentGameMode == GameMode.ONE_PLAYER && p1_canPlay) {
-            switch (keycode) {
-                case KeyEvent.VK_LEFT:
-                    board1.moveLeft();
-                    break;
-                case KeyEvent.VK_RIGHT:
-                    board1.moveRight();
-                    break;
-                case KeyEvent.VK_DOWN:
-                    board1.movePieceDown();
-                    lastPieceMoveTime1 = System.currentTimeMillis();
-                    break;
-                case KeyEvent.VK_UP: // Rotação Direita
-                    board1.rotateRight();
-                    break;
-                case KeyEvent.VK_Z: // Rotação Esquerda
-                    board1.rotateLeft();
-                    break;
-                case KeyEvent.VK_SPACE:
-                    board1.dropDown();
-                    lastPieceMoveTime1 = System.currentTimeMillis();
-                    break;
-            }
-        }
-        
-        // Modo 2P: Controles Separados
-        if (currentGameMode == GameMode.TWO_PLAYER) {
-            switch (keycode) {
-                // --- Jogador 1 (W, A, S, D, Q, ESPAÇO) ---
-                case KeyEvent.VK_A: 
-                    if (p1_canPlay) board1.moveLeft();
-                    break;
-                case KeyEvent.VK_D: 
-                    if (p1_canPlay) board1.moveRight();
-                    break;
-                case KeyEvent.VK_S: 
-                    if (p1_canPlay) {
-                        board1.movePieceDown();
-                        lastPieceMoveTime1 = System.currentTimeMillis();
-                    }
-                    break;
-                case KeyEvent.VK_W: // Rotação Direita
-                    if (p1_canPlay) board1.rotateRight();
-                    break;
-                case KeyEvent.VK_Q: // Rotação Esquerda
-                    if (p1_canPlay) board1.rotateLeft();
-                    break;
-                case KeyEvent.VK_SPACE: 
-                    if (p1_canPlay) {
-                        board1.dropDown();
-                        lastPieceMoveTime1 = System.currentTimeMillis();
-                    }
-                    break;
-
-                // --- Jogador 2 (SETAS, UP, M, N) ---
-                case KeyEvent.VK_LEFT: 
-                    if (p2_canPlay) board2.moveLeft();
-                    break;
-                case KeyEvent.VK_RIGHT: 
-                    if (p2_canPlay) board2.moveRight();
-                    break;
-                case KeyEvent.VK_DOWN: 
-                    if (p2_canPlay) {
-                        board2.movePieceDown();
-                        lastPieceMoveTime2 = System.currentTimeMillis();
-                    }
-                    break;
-                case KeyEvent.VK_UP: // Rotação Direita
-                    if (p2_canPlay) board2.rotateRight();
-                    break;
-                case KeyEvent.VK_M: // Rotação Esquerda
-                    if (p2_canPlay) board2.rotateLeft();
-                    break;
-                case KeyEvent.VK_N: // Drop
-                    if (p2_canPlay) {
-                        board2.dropDown();
-                        lastPieceMoveTime2 = System.currentTimeMillis();
-                    }
-                    break;
-            }
-        }
-        
-        updateView();
+        return false;
     }
 
     private int getDelayForLevel(Board board) {
