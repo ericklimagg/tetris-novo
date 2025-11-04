@@ -1,6 +1,5 @@
 package com.tetris.controller;
 
-import com.tetris.audio.AudioManager;
 import com.tetris.model.Board;
 import com.tetris.model.Theme;
 import com.tetris.view.GameFrame;
@@ -28,7 +27,6 @@ public class GameController extends KeyAdapter implements ActionListener {
     private final Board board1; 
     private final Board board2; 
     private final Timer timer;
-    private final AudioManager audioManager;
 
     private int currentThemeIndex = 0;
     private GameMode currentGameMode = GameMode.ONE_PLAYER;
@@ -44,7 +42,6 @@ public class GameController extends KeyAdapter implements ActionListener {
         
         this.timer = new Timer(GAME_LOOP_DELAY, this);
         
-        this.audioManager = new AudioManager("/com/tetris/audio/background-music.wav");
         this.gameFrame.getGamePanel().addKeyListener(this);
         this.gameFrame.getGamePanel().setFocusable(true);
     }
@@ -101,7 +98,6 @@ public class GameController extends KeyAdapter implements ActionListener {
         if (p1_over && p2_over) {
             if (timer.isRunning()) {
                 timer.stop();
-                audioManager.stopMusic();
             }
         }
         
@@ -183,7 +179,6 @@ public class GameController extends KeyAdapter implements ActionListener {
             long startTime = System.currentTimeMillis();
             lastPieceMoveTime1 = startTime; 
             lastPieceMoveTime2 = startTime;
-            audioManager.playMusic();
             updateView();
             return;
         }
