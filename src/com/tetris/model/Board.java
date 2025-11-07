@@ -11,7 +11,7 @@ import java.util.Random;
 
 /**
  * Representa o estado completo do tabuleiro de jogo.
- * ETAPA 5: Buraco de lixo unificado.
+ * ETAPA 6: Menu Aprimorado (com reset).
  */
 public class Board {
 
@@ -56,6 +56,16 @@ public class Board {
         currentPiece = new Piece();
         nextPiece = new Piece();
         loadHighScore();
+        clearBoard();
+    }
+
+    /**
+     * NOVO: Reseta o estado do tabuleiro para voltar ao menu.
+     */
+    public void resetForMenu() {
+        isStarted = false;
+        isGameOver = false;
+        isPaused = false;
         clearBoard();
     }
 
@@ -229,14 +239,11 @@ public class Board {
             }
         }
 
-        // ####################################################################
-        // MUDANÇA AQUI: O buraco é escolhido UMA VEZ, antes do loop
-        // ####################################################################
+        // Buraco unificado
         int hole = garbageHoleRandom.nextInt(BOARD_WIDTH);
         
         // 2. Preenche as linhas de baixo com lixo
         for (int y = 0; y < lines; y++) {
-            // A linha "int hole = ..." foi movida para cima
             for (int x = 0; x < BOARD_WIDTH; x++) {
                 boardGrid[y * BOARD_WIDTH + x] = (x == hole) ? 
                     Shape.Tetrominoe.NoShape : 

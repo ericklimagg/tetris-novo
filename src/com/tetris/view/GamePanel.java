@@ -1,14 +1,16 @@
 package com.tetris.view;
 
-import com.tetris.controller.GameController; // NOVO
+import com.tetris.controller.GameController;
 import com.tetris.model.Theme;
 
 import javax.swing.BoxLayout;
 import javax.swing.JPanel;
+// Nenhum import de Box ou Component é mais necessário
 
 /**
  * Painel principal que contém e organiza os outros componentes da view.
- * Agora pode esconder/mostrar os componentes do P2.
+ * ATUALIZADO: Layout revertido para o original simples.
+ * A centralização será feita pelo 'pack()' no GameFrame.
  */
 public class GamePanel extends JPanel {
 
@@ -37,7 +39,7 @@ public class GamePanel extends JPanel {
         boardPanel2 = new BoardPanel();
         garbageBar2 = new GarbageBarPanel(false); 
 
-        // Adiciona os painéis na ordem visual
+        // Adiciona os painéis na ordem visual simples
         add(infoPanel1);   
         add(boardPanel1);  
         add(garbageBar1);  
@@ -46,7 +48,10 @@ public class GamePanel extends JPanel {
         add(boardPanel2);  
         add(infoPanel2);   
 
-        // NOVO: Esconde os componentes de 2P por defeito
+        // Define a cor de fundo inicial
+        updateTheme(Theme.AVAILABLE_THEMES[0]);
+
+        // Esconde os componentes de 2P por padrão (IMPORTANTE para o pack() do menu)
         garbageBar1.setVisible(false);
         garbageBar2.setVisible(false);
         boardPanel2.setVisible(false);
@@ -54,13 +59,16 @@ public class GamePanel extends JPanel {
     }
     
     /**
-     * NOVO: Mostra ou esconde os componentes do Jogador 2.
+     * Mostra ou esconde os componentes do Jogador 2.
+     * Esta lógica agora é a única responsável pelo tamanho do painel.
      */
     public void setMode(GameController.GameMode mode) {
         boolean isTwoPlayer = (mode == GameController.GameMode.TWO_PLAYER);
         
-        // Mostra/Esconde os 4 componentes do modo 2P
-        garbageBar1.setVisible(isTwoPlayer);
+        // P1's garbage bar é VISÍVEL APENAS no modo 2P
+        garbageBar1.setVisible(isTwoPlayer); 
+        
+        // Componentes P2
         garbageBar2.setVisible(isTwoPlayer);
         boardPanel2.setVisible(isTwoPlayer);
         infoPanel2.setVisible(isTwoPlayer);
@@ -72,6 +80,8 @@ public class GamePanel extends JPanel {
      * Atualiza o tema de todos os componentes visuais filhos.
      */
     public void updateTheme(Theme theme) {
+        setBackground(theme.uiBackground());
+        
         infoPanel1.updateTheme(theme);
         boardPanel1.updateTheme(theme);
         garbageBar1.updateTheme(theme); 

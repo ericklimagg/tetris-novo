@@ -12,7 +12,7 @@ import java.awt.Graphics;
 
 /**
  * Painel responsável por desenhar o tabuleiro de jogo e as peças.
- * Esta é uma classe puramente visual (View).
+ * ATUALIZADO: Fundo/Grade só são desenhados SE o jogo estiver ativo.
  */
 public class BoardPanel extends JPanel {
 
@@ -36,18 +36,23 @@ public class BoardPanel extends JPanel {
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
 
-        if (board == null) {
+        // --- CORREÇÃO DO FUNDO DO MENU ---
+        // A lógica de desenho do tabuleiro/grade só deve
+        // rodar se o jogo (board) existir e estiver iniciado.
+        if (board == null || !board.isStarted() || currentTheme == null) {
+            // Se o jogo não começou (estamos no menu),
+            // o OverlayPanel é quem vai desenhar o fundo sólido.
+            // Não fazemos nada aqui.
             return;
         }
-
+        // --- FIM DA CORREÇÃO ---
+        
+        // O restante da lógica só roda se o jogo estiver ativo
         drawBoardBackground(g);
         drawGrid(g);
         drawPlacedPieces(g);
-        
         drawGhostPiece(g); 
         drawCurrentPiece(g);
-        
-        // NOVO: Desenha a animação de "flash" por cima de tudo
         drawLinedClearAnimation(g);
     }
 
@@ -71,7 +76,6 @@ public class BoardPanel extends JPanel {
         int squareSize = getSquareSize();
         for (int i = 0; i < Board.BOARD_HEIGHT; i++) {
             
-            // Se a linha atual está a ser limpa, pula o desenho
             if (board.isAnimatingLineClear() && board.getLinesBeingCleared().contains(i)) {
                 continue;
             }
@@ -86,7 +90,6 @@ public class BoardPanel extends JPanel {
     }
 
     private void drawCurrentPiece(Graphics g) {
-        // Não desenha a peça atual se estiver a animar
         if (board.isAnimatingLineClear()) {
             return;
         }
@@ -106,7 +109,6 @@ public class BoardPanel extends JPanel {
     }
 
     private void drawGhostPiece(Graphics g) {
-        // Não desenha a peça fantasma se estiver a animar
         if (!board.isGhostPieceEnabled() || !board.isStarted() || board.isAnimatingLineClear()) {
             return;
         }
@@ -128,9 +130,6 @@ public class BoardPanel extends JPanel {
         }
     }
 
-    /**
-     * NOVO: Desenha a animação de "flash" para limpeza de linha.
-     */
     private void drawLinedClearAnimation(Graphics g) {
         if (!board.isAnimatingLineClear()) {
             return;
@@ -138,10 +137,6 @@ public class BoardPanel extends JPanel {
 
         int timer = board.getLineClearTimer();
         
-        // ####################################################################
-        // MUDANÇA AQUI: Lógica de piscar mudada para (timer % 2 == 0)
-        // Isso alterna entre "aceso" e "apagado" a cada quadro (33ms).
-        // ####################################################################
         Color flashColor;
         if (timer % 2 == 0) {
             flashColor = Color.WHITE;
@@ -165,8 +160,8 @@ public class BoardPanel extends JPanel {
         Color color = colors[shape.ordinal()];
 
         if (isGhost) {
-            g.setColor(color.darker()); // Cor para a peça fantasma
-            g.drawRect(x + 1, y + 1, size - 2, size - 2); // Desenha apenas o contorno
+            g.setColor(color.darker()); 
+            g.drawRect(x + 1, y + 1, size - 2, size - 2); 
         } else {
             g.setColor(color);
             g.fillRect(x + 1, y + 1, size - 2, size - 2);
