@@ -12,7 +12,7 @@ import java.awt.event.KeyEvent;
 
 /**
  * O Controller no padrão MVC.
- * ETAPA 17: Menu de Pause Robusto e Contextual.
+ * ATUALIZADO: Adiciona lógica de 'addWin()' no Game Over.
  */
 public class GameController extends KeyAdapter implements ActionListener {
 
@@ -22,15 +22,13 @@ public class GameController extends KeyAdapter implements ActionListener {
         TWO_PLAYER
     }
     
-    // --- Enum para Telas do Jogo (AGORA INCLUI PAUSE) ---
+    // --- Enum para Telas do Jogo ---
     public enum GameScreen {
         MAIN_MENU,
         MODE_SELECT,
         RANKING_SCREEN,
         RULES_SCREEN,
         CONTROLS_SCREEN,
-        
-        // --- NOVOS ESTADOS DE PAUSE ---
         PAUSED_MAIN,
         PAUSED_CONTROLS,
         PAUSED_RULES
@@ -58,10 +56,8 @@ public class GameController extends KeyAdapter implements ActionListener {
     private int gameOverSelection = 0; // 0 = Reiniciar, 1 = Menu
     private final int GAMEOVER_MENU_OPTIONS = 2;
     
-    // --- NOVO: Menu de Pause ---
-    private int pauseMenuSelection = 0; // 0=Voltar, 1=Controles, 2=Regras, 3=Sair
+    private int pauseMenuSelection = 0; 
     private final int PAUSE_MENU_OPTIONS = 4;
-    // --- FIM NOVO ---
     
     private long lastPieceMoveTime1;
     private long lastPieceMoveTime2;
@@ -91,8 +87,6 @@ public class GameController extends KeyAdapter implements ActionListener {
     @Override
     public void actionPerformed(ActionEvent e) {
         
-        // O Jogo só roda se 'isStarted' for true E
-        // se a tela não for um menu de pause
         boolean isGameRunning = board1.isStarted() && 
                                 currentScreen != GameScreen.PAUSED_MAIN &&
                                 currentScreen != GameScreen.PAUSED_CONTROLS &&
@@ -146,6 +140,17 @@ public class GameController extends KeyAdapter implements ActionListener {
                         backgroundMusic.stopMusic();
                     }
                     gameOverSelection = 0;
+                    
+                    // --- LÓGICA DE VITÓRIA (Modo 2P) ---
+                    if (currentGameMode == GameMode.TWO_PLAYER) {
+                        if (board1.isGameOver() && !board2.isGameOver()) {
+                            board2.addWin(); // P2 vence
+                        } else if (board2.isGameOver() && !board1.isGameOver()) {
+                            board1.addWin(); // P1 vence
+                        }
+                        // Se ambos perdem ao mesmo tempo, é empate, ninguém ganha.
+                    }
+                    // --- FIM ---
                 }
             }
         }
@@ -173,9 +178,6 @@ public class GameController extends KeyAdapter implements ActionListener {
             return; 
         }
 
-        // O 'isPaused' do board não é mais usado,
-        // usamos o 'currentScreen' do controller
-        // if (board.isStarted() && !board.isPaused()) {
         if (board.isStarted()) {
             if (currentTime - lastMoveTime > delay) {
                 board.movePieceDown();
@@ -205,7 +207,7 @@ public class GameController extends KeyAdapter implements ActionListener {
             mainMenuSelection, 
             modeSelectSelection,
             gameOverSelection,
-            pauseMenuSelection // <<< NOVO
+            pauseMenuSelection 
         );
 
         gameFrame.getGamePanel().updateTheme(currentTheme);
@@ -227,7 +229,6 @@ public class GameController extends KeyAdapter implements ActionListener {
                 isGameOver = board1.isGameOver() || board2.isGameOver();
             }
             
-            // Verifica o estado (Game Over, Pausado, ou Jogando)
             if (isGameOver) {
                 handleGameOverKeys(keycode);
             } else if (currentScreen == GameScreen.PAUSED_MAIN ||
@@ -269,7 +270,6 @@ public class GameController extends KeyAdapter implements ActionListener {
         lastPieceMoveTime1 = startTime; 
         lastPieceMoveTime2 = startTime;
         
-        // Define o estado de jogo como "rodando" (não pausado)
         currentScreen = null; 
     }
 
@@ -287,7 +287,6 @@ public class GameController extends KeyAdapter implements ActionListener {
         if (keycode == KeyEvent.VK_ENTER) {
             if (gameOverSelection == 0) {
                 // 0 = Reiniciar
-                // ATUALIZADO: Reinicia no mesmo modo que estava
                 startGame(currentGameMode); 
             } else {
                 // 1 = Voltar ao Menu
@@ -298,14 +297,13 @@ public class GameController extends KeyAdapter implements ActionListener {
 
     /**
      * Lida com teclas quando o jogo está PAUSADO.
-     * ATUALIZADO: Lógica completa do menu de pause.
      */
     private void handlePausedKeys(int keycode) {
         
         switch (currentScreen) {
             
-            case PAUSED_MAIN: // Navegando no menu de pause principal
-                if (keycode == KeyEvent.VK_P) { // Tecla de "despausar"
+            case PAUSED_MAIN: 
+                if (keycode == KeyEvent.VK_P) { 
                     unpauseGame();
                     return;
                 }
@@ -327,7 +325,6 @@ public class GameController extends KeyAdapter implements ActionListener {
                 
             case PAUSED_CONTROLS:
             case PAUSED_RULES:
-                // Se estiver em um sub-menu, ENTER ou ESC voltam ao menu de pause principal
                 if (keycode == KeyEvent.VK_ENTER || keycode == KeyEvent.VK_ESCAPE || keycode == KeyEvent.VK_BACK_SPACE) {
                     currentScreen = GameScreen.PAUSED_MAIN;
                 }
@@ -339,7 +336,7 @@ public class GameController extends KeyAdapter implements ActionListener {
      * NOVO: Helper para despausar o jogo.
      */
     private void unpauseGame() {
-        currentScreen = null; // Define o estado como "jogando"
+        currentScreen = null; 
         if (backgroundMusic != null) {
             backgroundMusic.playMusic();
         }
@@ -359,10 +356,8 @@ public class GameController extends KeyAdapter implements ActionListener {
         board1.resetForMenu();
         board2.resetForMenu();
         
-        // Expande a janela de volta ao tamanho 2P para o menu
         gameFrame.getGamePanel().setMode(GameController.GameMode.TWO_PLAYER);
         gameFrame.packAndCenter(); 
-        // Esconde os componentes 2P (para o estado visual do menu)
         gameFrame.getGamePanel().setMode(GameController.GameMode.ONE_PLAYER); 
 
         currentScreen = GameScreen.MAIN_MENU;
@@ -374,7 +369,6 @@ public class GameController extends KeyAdapter implements ActionListener {
      */
     private void handleGameKeys(int keycode) {
         
-        // --- TECLAS GLOBAIS (Pausa, Tema, Ghost) ---
         if (keycode == KeyEvent.VK_T) {
             currentThemeIndex = (currentThemeIndex + 1) % Theme.AVAILABLE_THEMES.length;
             return;
@@ -385,9 +379,8 @@ public class GameController extends KeyAdapter implements ActionListener {
             return;
         }
         if (keycode == KeyEvent.VK_P) {
-             // --- ATUALIZADO: Muda o estado para PAUSADO ---
              currentScreen = GameScreen.PAUSED_MAIN;
-             pauseMenuSelection = 0; // Reseta cursor do pause
+             pauseMenuSelection = 0; 
              if (backgroundMusic != null) {
                  backgroundMusic.stopMusic();
              }

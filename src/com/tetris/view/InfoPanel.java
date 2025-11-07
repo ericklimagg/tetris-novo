@@ -15,7 +15,7 @@ import java.awt.RenderingHints;
 
 /**
  * Painel responsável por exibir as informações do jogo (pontuação, nível, etc.).
- * Esta é uma classe puramente visual (View).
+ * ATUALIZADO: Adiciona 'Vitórias' e usa HighScore estático.
  */
 public class InfoPanel extends JPanel {
 
@@ -56,7 +56,6 @@ public class InfoPanel extends JPanel {
      * @param g2d O contexto gráfico 2D para um melhor desenho.
      */
     private void drawGameInfo(Graphics2D g2d) {
-        // Ativa o anti-aliasing para bordas mais suaves
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
         Color textColor = (currentTheme.uiBackground().getRed() < 128) ? Color.WHITE : Color.BLACK;
@@ -68,9 +67,15 @@ public class InfoPanel extends JPanel {
         
         int currentY = 40;
 
-        // Desenha blocos de informação
-        currentY = drawInfoBlock(g2d, "HIGH SCORE", String.format("%06d", board.getHighScore()), padding, currentY, blockWidth, blockHeight, textColor);
+        // --- ATUALIZADO: Chama Board.getHighScore() (estático) ---
+        currentY = drawInfoBlock(g2d, "HIGH SCORE", String.format("%06d", Board.getHighScore()), padding, currentY, blockWidth, blockHeight, textColor);
         currentY += spacing;
+        
+        // --- NOVO: Adiciona o card de Vitórias ---
+        currentY = drawInfoBlock(g2d, "VITÓRIAS", String.format("%03d", board.getWins()), padding, currentY, blockWidth, blockHeight, textColor);
+        currentY += spacing;
+        // --- FIM NOVO ---
+        
         currentY = drawInfoBlock(g2d, "PONTUAÇÃO", String.format("%06d", board.getScore()), padding, currentY, blockWidth, blockHeight, textColor);
         currentY += spacing;
         
@@ -80,9 +85,6 @@ public class InfoPanel extends JPanel {
         drawInfoBlock(g2d, "LINHAS", String.format("%03d", board.getLinesCleared()), padding + halfWidth + spacing, currentY, halfWidth, blockHeight, textColor);
         currentY += blockHeight + spacing;
 
-        // ####################################################################
-        // NOVO: Blocos de Estatísticas (Tetris e Peças)
-        // ####################################################################
         drawInfoBlock(g2d, "TETRIS", String.format("%03d", board.getTetrisCount()), padding, currentY, halfWidth, blockHeight, textColor);
         drawInfoBlock(g2d, "PEÇAS", String.format("%04d", board.getTotalPieces()), padding + halfWidth + spacing, currentY, halfWidth, blockHeight, textColor);
         currentY += blockHeight + spacing;
@@ -136,9 +138,8 @@ public class InfoPanel extends JPanel {
         
         Piece nextPiece = board.getNextPiece();
         if (nextPiece != null) {
-            // Centraliza a peça dentro do novo espaço maior
             int previewX = x + (width / 2) - (2 * SQUARE_PREVIEW_SIZE);
-            int previewY = y + 45; // Corrigido para criar um vão em baixo
+            int previewY = y + 45; 
             for (int i = 0; i < 4; i++) {
                 int px = previewX + (nextPiece.x(i) + 1) * SQUARE_PREVIEW_SIZE;
                 int py = previewY + (1 - nextPiece.y(i)) * SQUARE_PREVIEW_SIZE;
@@ -163,7 +164,6 @@ public class InfoPanel extends JPanel {
         g.setColor(textColor);
         g.setFont(new Font("Consolas", Font.BOLD, 18));
         
-        // Centraliza o texto
         int stringWidth = g.getFontMetrics().stringWidth(text);
         g.drawString(text, x + (width - stringWidth) / 2, y + (height / 2) + 7);
     }

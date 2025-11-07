@@ -11,7 +11,7 @@ import java.util.Random;
 
 /**
  * Representa o estado completo do tabuleiro de jogo.
- * ETAPA 6: Menu Aprimorado (com reset).
+ * ATUALIZADO: Adiciona contador de Vitórias e HighScore estático (global).
  */
 public class Board {
 
@@ -22,18 +22,22 @@ public class Board {
     private static final String HIGHSCORE_FILE = "highscore.txt";
     private static final int LINE_CLEAR_ANIMATION_TICKS = 8; 
 
-    // --- Estado do Jogo ---
+    // --- Estado Global (Estático) ---
+    private static int highScore = 0;
+    private static boolean isHighScoreLoaded = false; // <<< NOVO
+
+    // --- Estado da Instância ---
     private boolean isStarted = false;
     private boolean isPaused = false;
     private boolean isGameOver = false;
     private boolean isGhostPieceEnabled = true;
 
     private int score = 0;
-    private int highScore = 0;
     private int level = 1;
     private int linesCleared = 0;
     private int totalPieces = 0;
     private int tetrisCount = 0;
+    private int wins = 0; // <<< NOVO: Contador de vitórias
     
     // --- Variáveis de Lixo (Garbage) ---
     private int incomingGarbage = 0;
@@ -55,13 +59,16 @@ public class Board {
         boardGrid = new Shape.Tetrominoe[BOARD_WIDTH * BOARD_HEIGHT];
         currentPiece = new Piece();
         nextPiece = new Piece();
-        loadHighScore();
+        
+        // --- ATUALIZADO: Carrega o HighScore apenas uma vez ---
+        if (!isHighScoreLoaded) {
+            loadHighScore();
+            isHighScoreLoaded = true;
+        }
+        // --- FIM ---
         clearBoard();
     }
 
-    /**
-     * NOVO: Reseta o estado do tabuleiro para voltar ao menu.
-     */
     public void resetForMenu() {
         isStarted = false;
         isGameOver = false;
@@ -77,11 +84,11 @@ public class Board {
         linesBeingCleared.clear();    
         score = 0;
         level = 1;
-        linesCleared = 0;
+        linesCleared = 0; 
         totalPieces = 0;
         tetrisCount = 0;
+        // 'wins' não é resetado no start(), pois persiste pela sessão
         
-        // Reseta o lixo
         incomingGarbage = 0;
         outgoingGarbage = 0;
         
@@ -98,15 +105,14 @@ public class Board {
     }
 
     public void newPiece() {
-        // Aplica o lixo pendente antes de criar a nova peça
         if (this.incomingGarbage > 0) {
             applyGarbageLines(this.incomingGarbage);
             this.incomingGarbage = 0;
         }
 
         currentPiece = nextPiece;
-        nextPiece = new Piece(); //NOVO
-        nextPiece.setRandomShape(); //NOVO
+        nextPiece = new Piece(); 
+        nextPiece.setRandomShape(); 
         currentPiece.setX(BOARD_WIDTH / 2);
         currentPiece.setY(BOARD_HEIGHT - 1 + currentPiece.minY());
         
@@ -116,10 +122,12 @@ public class Board {
             isGameOver = true;
             currentPiece.setShape(Shape.Tetrominoe.NoShape);
             
+            // --- ATUALIZADO: Salva o HighScore global ---
             if (score > highScore) {
                 highScore = score;
                 saveHighScore();
             }
+            // --- FIM ---
         }
     }
 
@@ -199,13 +207,12 @@ public class Board {
 
         int numFullLines = linesBeingCleared.size();
         
-        // Calcula o lixo a enviar
         if (numFullLines == 2) {
             outgoingGarbage = 1;
         } else if (numFullLines == 3) {
             outgoingGarbage = 2;
         } else if (numFullLines == 4) {
-            outgoingGarbage = 4; // Tetris envia 4
+            outgoingGarbage = 4;
             tetrisCount++;
         }
 
@@ -222,7 +229,6 @@ public class Board {
     }
 
     private void applyGarbageLines(int lines) {
-        // Verifica se o lixo vai causar Game Over
         for (int y = BOARD_HEIGHT - lines; y < BOARD_HEIGHT; y++) {
             for (int x = 0; x < BOARD_WIDTH; x++) {
                 if (shapeAt(x, y) != Shape.Tetrominoe.NoShape) {
@@ -232,17 +238,14 @@ public class Board {
             }
         }
 
-        // 1. Empurra o tabuleiro existente para cima
         for (int y = BOARD_HEIGHT - 1; y >= lines; y--) {
             for (int x = 0; x < BOARD_WIDTH; x++) {
                 boardGrid[y * BOARD_WIDTH + x] = shapeAt(x, y - lines);
             }
         }
 
-        // Buraco unificado
         int hole = garbageHoleRandom.nextInt(BOARD_WIDTH);
         
-        // 2. Preenche as linhas de baixo com lixo
         for (int y = 0; y < lines; y++) {
             for (int x = 0; x < BOARD_WIDTH; x++) {
                 boardGrid[y * BOARD_WIDTH + x] = (x == hole) ? 
@@ -251,7 +254,6 @@ public class Board {
             }
         }
         
-        // 3. Empurra a peça que está a cair para cima
         if (currentPiece.getShape() != Shape.Tetrominoe.NoShape) {
              currentPiece.setY(currentPiece.getY() + lines);
         }
@@ -314,25 +316,38 @@ public class Board {
         int[] points = {0, 40, 100, 300, 1200};
         score += points[lines] * level;
     }
-    private void loadHighScore() {
+    
+    // --- ATUALIZADO: Métodos de HighScore agora são ESTÁTICOS ---
+    private static void loadHighScore() {
         try (BufferedReader reader = new BufferedReader(new FileReader(HIGHSCORE_FILE))) {
             highScore = Integer.parseInt(reader.readLine());
         } catch (IOException | NumberFormatException e) {
             highScore = 0;
         }
     }
-    private void saveHighScore() {
+    private static void saveHighScore() {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(HIGHSCORE_FILE))) {
             writer.write(String.valueOf(highScore));
         } catch (IOException e) {
             System.err.println("Erro ao salvar o high score: " + e.getMessage());
         }
     }
+    // --- FIM ---
+    
     public void decrementLineClearTimer() {
         if (lineClearTimer > 0) {
             lineClearTimer--;
         }
     }
+    
+    // --- NOVO: Métodos de Vitória ---
+    public void addWin() {
+        this.wins++;
+    }
+    public int getWins() {
+        return this.wins;
+    }
+    // --- FIM NOVO ---
 
     // --- Getters para o View e Controller ---
     public Shape.Tetrominoe shapeAt(int x, int y) {
@@ -343,7 +358,10 @@ public class Board {
     public boolean isGameOver() { return isGameOver; }
     public boolean isGhostPieceEnabled() { return isGhostPieceEnabled; }
     public int getScore() { return score; }
-    public int getHighScore() { return highScore; }
+    
+    // HighScore agora é estático
+    public static int getHighScore() { return highScore; } 
+    
     public int getLevel() { return level; }
     public int getLinesCleared() { return linesCleared; }
     public Piece getCurrentPiece() { return currentPiece; }
