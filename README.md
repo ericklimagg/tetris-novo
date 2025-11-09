@@ -1,4 +1,4 @@
-# Tetris-Novo (Java Swing)
+# Tetris (Java Swing)
 
 Este é um clone do clássico jogo Tetris feito em Java (Swing), com foco em um sistema robusto de perfis de jogador e ranking. O projeto salva todas as pontuações e estatísticas de jogador em um banco de dados SQL Server.
 
