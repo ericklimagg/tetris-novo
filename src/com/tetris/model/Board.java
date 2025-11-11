@@ -41,7 +41,9 @@ public class Board {
     // --- Variáveis de Lixo (Garbage) ---
     private int incomingGarbage = 0; // Lixo a ser recebido
     private int outgoingGarbage = 0; // Lixo a ser enviado
-    private Random garbageHoleRandom = new Random(); // Para decidir onde fica o buraco no lixo
+    
+    // (O garbageHoleRandom não é mais necessário se as linhas são sólidas)
+    // private Random garbageHoleRandom = new Random(); 
 
     // --- Estado das Peças ---
     private Piece currentPiece;
@@ -68,7 +70,20 @@ public class Board {
         isStarted = false;
         isGameOver = false;
         isPaused = false;
+        
+        // --- CORREÇÃO ---
+        // Zera as vitórias da sessão ao voltar para o menu
+        resetWins(); 
+        
         clearBoard();
+    }
+    
+    /**
+     * NOVO MÉTODO: Zera o contador de vitórias da sessão.
+     * Chamado ao voltar ao menu ou iniciar uma nova sessão 2P.
+     */
+    public void resetWins() {
+        this.wins = 0;
     }
 
     /**
@@ -87,7 +102,11 @@ public class Board {
         linesCleared = 0; 
         totalPieces = 0;
         tetrisCount = 0;
-        // 'wins' não é resetado no start(), pois persiste pela sessão de jogo
+        
+        // --- INÍCIO DA CORREÇÃO ---
+        // A linha 'wins = 0;' foi REMOVIDA daqui.
+        // Agora o 'wins' persiste entre "Reiniciar".
+        // --- FIM DA CORREÇÃO ---
         
         incomingGarbage = 0;
         outgoingGarbage = 0;
@@ -192,12 +211,19 @@ public class Board {
         // Itera de baixo para cima
         for (int i = BOARD_HEIGHT - 1; i >= 0; i--) {
             boolean lineIsFull = true;
+            
+            // (Esta é a correção do bug anterior: não limpar lixo)
             for (int j = 0; j < BOARD_WIDTH; j++) {
-                if (shapeAt(j, i) == Shape.Tetrominoe.NoShape) {
+                Shape.Tetrominoe shape = shapeAt(j, i);
+                
+                if (shape == Shape.Tetrominoe.NoShape || 
+                    shape == Shape.Tetrominoe.GarbageShape) { 
+                    
                     lineIsFull = false;
                     break;
                 }
             }
+
             if (lineIsFull) {
                 linesBeingCleared.add(i);
             }
@@ -278,15 +304,10 @@ public class Board {
             }
         }
 
-        // Gera um buraco aleatório para o lixo
-        int hole = garbageHoleRandom.nextInt(BOARD_WIDTH);
-        
-        // Adiciona as novas linhas de lixo na base
+        // (Esta é a correção do bug anterior: lixo sólido)
         for (int y = 0; y < lines; y++) {
             for (int x = 0; x < BOARD_WIDTH; x++) {
-                boardGrid[y * BOARD_WIDTH + x] = (x == hole) ? 
-                    Shape.Tetrominoe.NoShape : 
-                    Shape.Tetrominoe.GarbageShape;
+                boardGrid[y * BOARD_WIDTH + x] = Shape.Tetrominoe.GarbageShape;
             }
         }
         

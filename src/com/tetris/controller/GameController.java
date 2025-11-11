@@ -6,6 +6,7 @@ import com.tetris.view.GameFrame;
 import com.tetris.audio.AudioManager;
 import com.tetris.database.PlayerProfileDAO;
 import com.tetris.database.SoloScoreDAO;
+import com.tetris.database.MultiplayerMatchDAO; 
 import com.tetris.database.PlayerProfile;
 import com.tetris.database.SoloScoreEntry;
 import com.tetris.database.PlayerWinsEntry;
@@ -16,6 +17,12 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.util.List; 
+// --- INÍCIO DAS NOVAS IMPORTAÇÕES PARA INPUT SIMULTÂNEO (DAS/ARR) ---
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+// --- FIM DAS NOVAS IMPORTAÇÕES ---
 
 /**
  * O Controller (no padrão MVC) principal do jogo.
@@ -63,6 +70,32 @@ public class GameController extends KeyAdapter implements ActionListener {
     // Acesso ao Banco de Dados (DAO)
     private final PlayerProfileDAO profileDAO;
     private final SoloScoreDAO soloScoreDAO;
+    private final MultiplayerMatchDAO multiplayerMatchDAO; 
+    
+    // --- INÍCIO DAS MUDANÇAS PARA INPUT SIMULTÂNEO (DAS/ARR) ---
+    /**
+     * Armazena o estado de todas as teclas pressionadas no momento.
+     * Usado para "polling" (verificação de estado) no loop de jogo.
+     */
+    private final Set<Integer> pressedKeys = new HashSet<>();
+    /**
+     * Mapa para rastrear o tempo do primeiro "press" de uma tecla (para o DAS).
+     */
+    private final Map<Integer, Long> keyFirstPressTime = new HashMap<>();
+    /**
+     * Mapa para rastrear o tempo da última repetição de uma tecla (para o ARR).
+     */
+    private final Map<Integer, Long> keyLastRepeatTime = new HashMap<>();
+    
+    /**
+     * Define o atraso (em ms) antes que o auto-repeat comece (Delayed Auto Shift).
+     */
+    private static final long INPUT_DAS_DELAY = 160; 
+    /**
+     * Define a velocidade (em ms) do auto-repeat (Auto Repeat Rate).
+     */
+    private static final long INPUT_ARR_RATE = 50;  
+    // --- FIM DAS MUDANÇAS ---
     
     // Estado de Sessão e Perfis
     private PlayerProfile currentUser = null;   // Perfil do Jogador 1
@@ -71,7 +104,7 @@ public class GameController extends KeyAdapter implements ActionListener {
     private List<PlayerWinsEntry> top2PWins;    
     private List<PlayerProfile> allProfiles; 
     private String playerNameInput = ""; 
-    private String profileErrorMessage = null; // Feedback para falhas de login/criação
+    private String profileErrorMessage = null; 
     
     // Estado de UI
     private int currentThemeIndex = 0;
@@ -103,20 +136,19 @@ public class GameController extends KeyAdapter implements ActionListener {
         
         this.timer = new Timer(GAME_LOOP_DELAY, this);
         
-        // Adiciona o listener de teclas ao painel do jogo e requisita foco
         this.gameFrame.getGamePanel().addKeyListener(this);
         this.gameFrame.getGamePanel().setFocusable(true);
 
         System.out.println("GameController: Tentando inicializar o AudioManager...");
         this.backgroundMusic = new AudioManager("/com/tetris/audio/background-music.wav");
         
-        // Instancia os DAOs para interação com o banco
         this.profileDAO = new PlayerProfileDAO();
         this.soloScoreDAO = new SoloScoreDAO();
+        this.multiplayerMatchDAO = new MultiplayerMatchDAO();
     }
 
     /**
-     * Inicia o timer principal do jogo e atualiza a view pela primeira vez.
+     * Inicia o timer principal do jogo.
      */
     public void start() {
         long startTime = System.currentTimeMillis();
@@ -127,12 +159,11 @@ public class GameController extends KeyAdapter implements ActionListener {
     }
 
     /**
-     * O loop principal do jogo, chamado pelo Timer a cada GAME_LOOP_DELAY ms.
+     * O loop principal do jogo, chamado pelo Timer.
      */
     @Override
     public void actionPerformed(ActionEvent e) {
         
-        // Verifica se o jogo está ativamente em andamento
         boolean isGameRunning = board1.isStarted() &&
                                 currentScreen != GameScreen.PAUSED_MAIN &&
                                 currentScreen != GameScreen.PAUSED_CONTROLS &&
@@ -143,7 +174,10 @@ public class GameController extends KeyAdapter implements ActionListener {
                                 
         if (isGameRunning) {
             
-            // --- Lógica de Jogo Principal ---
+            // --- LÓGICA DE AUTO-REPEAT (DAS/ARR) ---
+            processAutoRepeatInputs();
+            
+            // --- Lógica de Jogo Principal (Gravidade) ---
             long currentTime = System.currentTimeMillis();
             
             // Lógica P1
@@ -162,18 +196,26 @@ public class GameController extends KeyAdapter implements ActionListener {
                 }
             }
             
-            // Lógica de "Garbage" (Lixo) para 2P
+            // --- Lógica de Lixo (Garbage) ---
             if (currentGameMode == GameMode.TWO_PLAYER) {
                 int p1_garbage = board1.getOutgoingGarbage();
                 int p2_garbage = board2.getOutgoingGarbage();
-                if (p1_garbage > 0 || p2_garbage > 0) {
-                    // Cancela lixo (ataques se anulam)
+
+                if (p1_garbage > 0 && p2_garbage > 0) { 
                     if (p1_garbage > p2_garbage) {
-                        board2.addIncomingGarbage(p1_garbage - p2_garbage);
-                    } else if (p2_garbage > p1_garbage) { 
-                        board1.addIncomingGarbage(p2_garbage - p1_garbage);
+                        board2.addIncomingGarbage(p1_garbage - p2_garbage); // P1 ataca P2
+                    } else if (p2_garbage > p1_garbage) {
+                        board1.addIncomingGarbage(p2_garbage - p1_garbage); // P2 ataca P1
                     }
                     board1.clearOutgoingGarbage();
+                    board2.clearOutgoingGarbage();
+                
+                } else if (p1_garbage > 0) { 
+                    board2.addIncomingGarbage(p1_garbage);
+                    board1.clearOutgoingGarbage();
+                
+                } else if (p2_garbage > 0) { 
+                    board1.addIncomingGarbage(p2_garbage);
                     board2.clearOutgoingGarbage();
                 }
             }
@@ -183,20 +225,14 @@ public class GameController extends KeyAdapter implements ActionListener {
             boolean p2_over = (currentGameMode == GameMode.TWO_PLAYER) && board2.isGameOver();
             boolean round_is_finished = (currentGameMode == GameMode.ONE_PLAYER) ? p1_over : (p1_over || p2_over);
 
-            // Processa o fim de jogo (salva scores, etc.)
             if (round_is_finished) {
-                
                 if (timer.isRunning()) { 
                     timer.stop();
-                    
-                    if (backgroundMusic != null) {
-                        backgroundMusic.stopMusic();
-                    }
+                    if (backgroundMusic != null) backgroundMusic.stopMusic();
                     
                     // Salva estatísticas 1P
                     if (currentGameMode == GameMode.ONE_PLAYER && p1_over) {
                         if (currentUser != null && board1.getScore() > 0) {
-                            // Salva o score individual da partida
                             soloScoreDAO.addScore(
                                 currentUser.getUserID(), 
                                 board1.getScore(),
@@ -204,92 +240,93 @@ public class GameController extends KeyAdapter implements ActionListener {
                                 board1.getLinesCleared(),
                                 board1.getTetrisCount()
                             );
-                            // Atualiza o perfil (jogos jogados, high score)
                             profileDAO.updateStats1P(currentUser.getUserID(), board1.getScore());
-
-                            // Se um novo high score foi salvo, atualiza o objeto 'currentUser'
                             if (board1.getScore() > currentUser.getHighScore1P()) {
-                                fetchAllProfiles(); // Recarrega dados dos perfis
+                                fetchAllProfiles(); 
                                 currentUser = profileDAO.findUserByUsername(currentUser.getUsername());
                             }
                         }
-                    
                     // Salva estatísticas 2P
                     } else if (currentGameMode == GameMode.TWO_PLAYER) {
                          if (currentUser != null && currentUser2 != null) {
                             PlayerProfile winner = null;
                             PlayerProfile loser = null;
+                            int winnerScore = 0, loserScore = 0;
+                            int p1_score = board1.getScore(), p2_score = board2.getScore();
                             
                             if (p1_over && !p2_over) { // P2 Venceu
-                                board2.addWin();
-                                winner = currentUser2;
-                                loser = currentUser;
+                                board2.addWin(); // <-- Incrementa o contador da sessão
+                                winner = currentUser2; loser = currentUser;
+                                winnerScore = p2_score; loserScore = p1_score;
                             } else if (p2_over && !p1_over) { // P1 Venceu
-                                board1.addWin();
-                                winner = currentUser;
-                                loser = currentUser2;
+                                board1.addWin(); // <-- Incrementa o contador da sessão
+                                winner = currentUser; loser = currentUser2;
+                                winnerScore = p1_score; loserScore = p2_score;
                             }
                             
-                            // Atualiza o perfil de ambos (vitória/derrota)
                             if (winner != null && loser != null) {
+                                // Salva no BD (apenas 1x por round)
                                 profileDAO.updateStats2P(winner.getUserID(), loser.getUserID());
+                                multiplayerMatchDAO.recordMatch(
+                                    winner.getUserID(), loser.getUserID(), 
+                                    winnerScore, loserScore
+                                );
                             }
                          }
                     }
-                    
-                    gameOverSelection = 0; // Reseta a seleção do menu "Game Over"
+                    gameOverSelection = 0; 
                 }
             }
-            
         }
-        
-        // Atualiza a tela independentemente do estado (jogo rodando ou menu)
         updateView();
     }
 
     /**
-     * Gerencia a lógica de queda de peça e animações de limpeza de linha.
+     * Gerencia a lógica de queda de peça (gravidade) e animações de limpeza.
      */
     private void handlePlayerLogic(Board board, long currentTime, long lastMoveTime, long delay) {
         if (board.isGameOver()) return; 
         
-        // Se estiver animando a limpeza de linha, apenas conta o tempo
         if (board.isAnimatingLineClear()) {
             board.decrementLineClearTimer();
             if (board.getLineClearTimer() <= 0) {
-                board.finishLineClear(); // Executa a lógica de limpeza
-                if (!board.isGameOver()) board.newPiece(); // Gera nova peça
+                board.finishLineClear(); 
+                if (!board.isGameOver()) board.newPiece(); 
             }
-            return; // Pula a lógica de movimento
+            return; 
         }
         
-        // Se o jogo estiver rodando, processa a queda da peça
         if (board.isStarted()) {
-            if (currentTime - lastMoveTime > delay) board.movePieceDown();
+            boolean p1SoftDrop = (currentGameMode == GameMode.ONE_PLAYER && pressedKeys.contains(KeyEvent.VK_DOWN)) ||
+                                 (currentGameMode == GameMode.TWO_PLAYER && pressedKeys.contains(KeyEvent.VK_S));
+            boolean p2SoftDrop = (currentGameMode == GameMode.TWO_PLAYER && pressedKeys.contains(KeyEvent.VK_DOWN));
+
+            if (board == board1 && p1SoftDrop) return; // P1 está no soft drop, gravidade pausa
+            if (board == board2 && p2SoftDrop) return; // P2 está no soft drop, gravidade pausa
+
+            if (currentTime - lastMoveTime > delay) {
+                board.movePieceDown();
+            }
         }
     }
 
 
     /**
-     * Envia todos os dados de estado atualizados para a View (GameFrame e seus painéis filhos).
+     * Envia todos os dados de estado atualizados para a View.
      */
     private void updateView() {
-        // Atualiza os componentes do Jogo (Tabuleiro, Infos)
         gameFrame.getGamePanel().getBoardPanel1().updateBoard(board1);
         gameFrame.getGamePanel().getInfoPanel1().updateInfo(board1);
         gameFrame.getGamePanel().getGarbageBar1().updateBoard(board1);
-        
         gameFrame.getGamePanel().getBoardPanel2().updateBoard(board2);
         gameFrame.getGamePanel().getInfoPanel2().updateInfo(board2);
         gameFrame.getGamePanel().getGarbageBar2().updateBoard(board2);
         
         Theme currentTheme = Theme.AVAILABLE_THEMES[currentThemeIndex];
         
-        // Atualiza o tema de todos os componentes
         gameFrame.getOverlayPanel().updateTheme(currentTheme);
         gameFrame.getGamePanel().updateTheme(currentTheme);
         
-        // Define o High Score a ser exibido nos InfoPanels
         int hScore1 = (currentUser != null) ? currentUser.getHighScore1P() : 0;
         gameFrame.getGamePanel().getInfoPanel1().setHighScore(hScore1);
 
@@ -300,80 +337,114 @@ public class GameController extends KeyAdapter implements ActionListener {
             gameFrame.getGamePanel().getInfoPanel2().setHighScore(0); 
         }
 
-        // Envia todos os dados de estado para o Overlay (menus, ranking, etc.)
         gameFrame.getOverlayPanel().updateMenuState(
-            board1, 
-            board2, 
-            currentGameMode, 
-            currentScreen, 
-            mainMenuSelection, 
-            modeSelectSelection,
-            gameOverSelection,
-            pauseMenuSelection,
-            rankingModeSelection, 
-            profileListSelection, 
-            topSoloScores,     
-            top2PWins,         
-            allProfiles,       
-            playerNameInput,   
-            profileErrorMessage,
-            currentUser,
-            currentUser2       
+            board1, board2, currentGameMode, currentScreen, 
+            mainMenuSelection, modeSelectSelection, gameOverSelection,
+            pauseMenuSelection, rankingModeSelection, profileListSelection, 
+            topSoloScores, top2PWins, allProfiles,       
+            playerNameInput, profileErrorMessage,
+            currentUser, currentUser2       
         );
 
-        gameFrame.repaint(); // Redesenha a janela
+        gameFrame.repaint(); 
+    }
+    
+    // --- Métodos de Input (DAS/ARR) ---
+
+    /**
+     * Processa inputs contínuos (DAS/ARR) a partir do Set 'pressedKeys'.
+     */
+    private void processAutoRepeatInputs() {
+        if (board1.isAnimatingLineClear() && 
+           (currentGameMode == GameMode.ONE_PLAYER || board2.isAnimatingLineClear())) {
+            return; 
+        }
+
+        long now = System.currentTimeMillis();
+            
+        for (int keycode : new HashSet<>(pressedKeys)) {
+            
+            Long firstPressTime = keyFirstPressTime.get(keycode);
+            if (firstPressTime == null) continue; 
+
+            long timeHeld = now - firstPressTime;
+            
+            if (timeHeld > INPUT_DAS_DELAY) {
+                Long lastRepeatTime = keyLastRepeatTime.get(keycode);
+                if (lastRepeatTime == null) continue; 
+                
+                if (now - lastRepeatTime > INPUT_ARR_RATE) {
+                    handleGameAction(keycode, false); // false = não é o primeiro "press"
+                    keyLastRepeatTime.put(keycode, now);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Registra quando uma tecla é solta.
+     */
+    @Override
+    public void keyReleased(KeyEvent e) {
+        int keycode = e.getKeyCode();
+        pressedKeys.remove(keycode);
+        keyFirstPressTime.remove(keycode);
+        keyLastRepeatTime.remove(keycode);
     }
 
     /**
-     * Roteador principal de entrada do teclado.
+     * Roteador principal de entrada do teclado (primeira pressão).
      */
     @Override
     public void keyPressed(KeyEvent e) {
+        int keycode = e.getKeyCode();
         
-        // Limpa a mensagem de erro em telas de perfil ao digitar
+        // Ignora repetições do SO
+        if (pressedKeys.contains(keycode)) {
+            return;
+        }
+        
+        // Registra a tecla e o tempo
+        pressedKeys.add(keycode);
+        long now = System.currentTimeMillis();
+        keyFirstPressTime.put(keycode, now);
+        keyLastRepeatTime.put(keycode, now); 
+        
         if (currentScreen == GameScreen.PROFILE_SELECTION ||
             currentScreen == GameScreen.PROFILE_SELECTION_P2 ||
             currentScreen == GameScreen.PROFILE_CREATE) {
             profileErrorMessage = null;
         }
 
-        // Roteia para handlers de telas específicas (que precisam de inputs complexos)
+        // Roteamento de Menu
         if (currentScreen == GameScreen.PROFILE_SELECTION) {
-            handleProfileListKeys(e, 1); 
-            updateView();
-            return; 
+            handleProfileListKeys(e, 1); updateView(); return; 
         }
         if (currentScreen == GameScreen.PROFILE_SELECTION_P2) {
-            handleProfileListKeys(e, 2); 
-            updateView();
-            return;
+            handleProfileListKeys(e, 2); updateView(); return;
         }
         if (currentScreen == GameScreen.PROFILE_CREATE) {
-            handleProfileCreateKeys(e);
-            updateView();
-            return;
+            handleProfileCreateKeys(e); updateView(); return;
         }
         if (currentScreen == GameScreen.RANKING_MODE_SELECT) {
-            handleRankingModeSelectKeys(e);
-            updateView();
-            return;
+            handleRankingModeSelectKeys(e); updateView(); return;
         }
 
-        // Roteia para handlers de estado (Jogo Ativo vs. Menu Principal)
-        int keycode = e.getKeyCode(); 
+        // Roteamento de Jogo
         boolean isGameActive = board1.isStarted() || board2.isStarted();
         
         if (isGameActive) {
             boolean isGameOver = board1.isGameOver() || (currentGameMode == GameMode.TWO_PLAYER && board2.isGameOver());
+            boolean isPaused = (currentScreen == GameScreen.PAUSED_MAIN ||
+                            currentScreen == GameScreen.PAUSED_CONTROLS ||
+                            currentScreen == GameScreen.PAUSED_RULES);
             
             if (isGameOver) {
                 handleGameOverKeys(keycode);
-            } else if (currentScreen == GameScreen.PAUSED_MAIN ||
-                       currentScreen == GameScreen.PAUSED_CONTROLS ||
-                       currentScreen == GameScreen.PAUSED_RULES) {
+            } else if (isPaused) {
                 handlePausedKeys(keycode);
             } else {
-                handleGameKeys(keycode);
+                handleGameAction(keycode, true); // true = é o primeiro "press"
             }
         } else {
             handleMenuKeys(keycode); 
@@ -388,7 +459,7 @@ public class GameController extends KeyAdapter implements ActionListener {
     private void handleProfileListKeys(KeyEvent e, int playerNum) {
         int keycode = e.getKeyCode();
         
-        int numOptions = (allProfiles != null ? allProfiles.size() : 0) + 1; // +1 para a opção "Criar Novo"
+        int numOptions = (allProfiles != null ? allProfiles.size() : 0) + 1; 
 
         if (keycode == KeyEvent.VK_UP || keycode == KeyEvent.VK_W) {
             profileListSelection = (profileListSelection - 1 + numOptions) % numOptions;
@@ -397,26 +468,19 @@ public class GameController extends KeyAdapter implements ActionListener {
             profileListSelection = (profileListSelection + 1) % numOptions;
         }
         
-        // Voltar para a seleção de modo
         if (keycode == KeyEvent.VK_ESCAPE || keycode == KeyEvent.VK_BACK_SPACE) {
             currentScreen = GameScreen.MODE_SELECT;
-            allProfiles = null; 
-            currentUser = null;
-            currentUser2 = null;
+            allProfiles = null; currentUser = null; currentUser2 = null;
             return;
         }
 
         if (keycode == KeyEvent.VK_ENTER) {
-            // Caso: selecionou [CRIAR NOVO USUÁRIO]
-            if (profileListSelection == numOptions - 1) { 
+            if (profileListSelection == numOptions - 1) { // [CRIAR NOVO USUÁRIO]
                 playerNameInput = "";
                 currentScreen = GameScreen.PROFILE_CREATE; 
-            
-            // Caso: selecionou um perfil existente
             } else if (allProfiles != null && profileListSelection < allProfiles.size()) {
                 PlayerProfile selectedProfile = allProfiles.get(profileListSelection);
                 
-                // Validação: P2 não pode ser o mesmo que P1
                 if (playerNum == 2 && currentUser != null && selectedProfile.getUserID() == currentUser.getUserID()) {
                     System.err.println("GameController: P2 não pode ser o mesmo que P1.");
                     profileErrorMessage = "P2 NÃO PODE SER IGUAL AO P1!";
@@ -427,16 +491,26 @@ public class GameController extends KeyAdapter implements ActionListener {
                     currentUser = profileDAO.findUserByUsername(selectedProfile.getUsername()); 
                     System.out.println("GameController: P1 logado como " + currentUser.getUsername());
                     
+                    // --- INÍCIO DA CORREÇÃO (RESET WINS) ---
+                    board1.resetWins();
+                    // --- FIM DA CORREÇÃO ---
+                    
                     if (currentGameMode == GameMode.ONE_PLAYER) {
-                        startGame(); // Jogo 1P começa direto
+                        startGame(); 
                     } else {
-                        profileListSelection = 0; // Prepara para seleção P2
+                        profileListSelection = 0; 
                         currentScreen = GameScreen.PROFILE_SELECTION_P2;
                     }
                 } else { // playerNum == 2
                     currentUser2 = profileDAO.findUserByUsername(selectedProfile.getUsername()); 
                     System.out.println("GameController: P2 logado como " + currentUser2.getUsername());
-                    startGame(); // Jogo 2P começa após P2
+                    
+                    // --- INÍCIO DA CORREÇÃO (RESET WINS) ---
+                    // Zera o placar de vitórias do P2 (board2) também
+                    board2.resetWins();
+                    // --- FIM DA CORREÇÃO ---
+                    
+                    startGame(); 
                 }
             }
         }
@@ -452,26 +526,21 @@ public class GameController extends KeyAdapter implements ActionListener {
             String cleanUsername = playerNameInput.trim();
             if (cleanUsername.isEmpty()) return;
 
-            // Validação: P2 não pode ser igual a P1
             if (currentGameMode == GameMode.TWO_PLAYER && 
                 currentUser != null && 
                 cleanUsername.equalsIgnoreCase(currentUser.getUsername())) {
-                
                 System.err.println("GameController: P2 não pode ser o mesmo que P1 (Criação).");
                 profileErrorMessage = "P2 NÃO PODE SER IGUAL AO P1!";
                 return;
             }
             
-            // Validação: Nome de usuário já existe
             PlayerProfile existingUser = profileDAO.findUserByUsername(cleanUsername);
-            
             if (existingUser != null) {
                 System.err.println("GameController: Nome de usuário já existe.");
                 profileErrorMessage = "NOME DE USUÁRIO JÁ EXISTE!";
                 return; 
             }
 
-            // Cria o jogador
             PlayerProfile profile = profileDAO.findOrCreatePlayer(cleanUsername);
             if (profile == null) {
                 System.err.println("GameController: Erro ao criar perfil (nome inválido?).");
@@ -479,31 +548,38 @@ public class GameController extends KeyAdapter implements ActionListener {
                 return;
             }
             
-            // Define o perfil criado como P1 ou P2
             if (currentUser == null) {
                 currentUser = profile;
                 System.out.println("GameController: P1 criado/logado como " + currentUser.getUsername());
                 
+                // --- INÍCIO DA CORREÇÃO (RESET WINS) ---
+                board1.resetWins();
+                // --- FIM DA CORREÇÃO ---
+                
                 if (currentGameMode == GameMode.ONE_PLAYER) {
                     startGame(); 
                 } else {
-                    fetchAllProfiles(); // Atualiza a lista para o P2 ver
+                    fetchAllProfiles(); 
                     profileListSelection = 0; 
                     currentScreen = GameScreen.PROFILE_SELECTION_P2; 
                 }
             } else { 
                 currentUser2 = profile;
                 System.out.println("GameController: P2 criado/logado como " + currentUser2.getUsername());
+                
+                // --- INÍCIO DA CORREÇÃO (RESET WINS) ---
+                // P1 já teve o wins resetado, agora reseta o P2
+                board2.resetWins();
+                // --- FIM DA CORREÇÃO ---
+                
                 startGame(); 
             }
 
         } else if (keycode == KeyEvent.VK_BACK_SPACE) {
-            // Apaga o último caractere
             if (!playerNameInput.isEmpty()) {
                 playerNameInput = playerNameInput.substring(0, playerNameInput.length() - 1);
             }
         } else if (keycode == KeyEvent.VK_ESCAPE) {
-            // Volta para a tela de seleção anterior
             if (currentUser == null) { 
                 currentScreen = GameScreen.PROFILE_SELECTION;
             } else { 
@@ -512,7 +588,6 @@ public class GameController extends KeyAdapter implements ActionListener {
             playerNameInput = "";
         
         } else {
-            // Adiciona o caractere digitado (se válido)
             char c = e.getKeyChar();
             if ((Character.isLetterOrDigit(c)) && playerNameInput.length() < 15) {
                 playerNameInput += Character.toUpperCase(c);
@@ -555,9 +630,8 @@ public class GameController extends KeyAdapter implements ActionListener {
      */
     private void startGame() {
         gameFrame.getGamePanel().setMode(currentGameMode); 
-        gameFrame.packAndCenter(); // Ajusta o tamanho da janela para 1P ou 2P
+        gameFrame.packAndCenter(); 
         
-        // Define os nomes dos jogadores nos InfoPanels
         if (currentUser != null) {
             gameFrame.getGamePanel().getInfoPanel1().setPlayerName(currentUser.getUsername());
         }
@@ -565,6 +639,7 @@ public class GameController extends KeyAdapter implements ActionListener {
             gameFrame.getGamePanel().getInfoPanel2().setPlayerName(currentUser2.getUsername());
         }
         
+        // start() NÃO reseta mais as vitórias
         board1.start();
         if (currentGameMode == GameMode.TWO_PLAYER) {
             board2.start();
@@ -577,12 +652,17 @@ public class GameController extends KeyAdapter implements ActionListener {
         if (!timer.isRunning()) {
             timer.start();
         }
-        // Reseta os timers de queda de peça
+        
         long startTime = System.currentTimeMillis();
         lastPieceMoveTime1 = startTime; 
         lastPieceMoveTime2 = startTime;
         
-        currentScreen = null; // Remove qualquer overlay de menu
+        // Limpa os estados de input ao iniciar
+        pressedKeys.clear();
+        keyFirstPressTime.clear();
+        keyLastRepeatTime.clear();
+        
+        currentScreen = null; 
     }
 
     /**
@@ -598,6 +678,7 @@ public class GameController extends KeyAdapter implements ActionListener {
         
         if (keycode == KeyEvent.VK_ENTER) {
             if (gameOverSelection == 0) { // Reiniciar
+                // (NÃO chamamos resetWins() aqui, para persistir o placar)
                 startGame(); 
             } else { // Voltar ao Menu
                 goToMenu();
@@ -613,9 +694,8 @@ public class GameController extends KeyAdapter implements ActionListener {
         if (currentScreen == null) return; 
 
         switch (currentScreen) {
-            // Navegação no menu de pausa principal
             case PAUSED_MAIN: 
-                if (keycode == KeyEvent.VK_P) { // Tecla de atalho para despausar
+                if (keycode == KeyEvent.VK_P) { 
                     unpauseGame();
                     return;
                 }
@@ -635,7 +715,6 @@ public class GameController extends KeyAdapter implements ActionListener {
                 }
                 break;
                 
-            // Voltar das telas de Controles ou Regras
             case PAUSED_CONTROLS:
             case PAUSED_RULES:
                 if (keycode == KeyEvent.VK_ENTER || keycode == KeyEvent.VK_ESCAPE || keycode == KeyEvent.VK_BACK_SPACE) {
@@ -652,14 +731,18 @@ public class GameController extends KeyAdapter implements ActionListener {
      * Sai do estado de pausa e retoma o jogo.
      */
     private void unpauseGame() {
-        currentScreen = null; // Remove o overlay de pausa
+        currentScreen = null; 
         if (backgroundMusic != null) {
             backgroundMusic.playMusic();
         }
-        // Reseta os timers de queda para evitar queda imediata
+        
         long currentTime = System.currentTimeMillis();
         lastPieceMoveTime1 = currentTime;
         lastPieceMoveTime2 = currentTime;
+        
+        pressedKeys.clear();
+        keyFirstPressTime.clear();
+        keyLastRepeatTime.clear();
     }
     
     /**
@@ -677,74 +760,87 @@ public class GameController extends KeyAdapter implements ActionListener {
             backgroundMusic.stopMusic();
         }
         
+        // resetForMenu() agora chama resetWins() internamente
         board1.resetForMenu();
         board2.resetForMenu();
         
-        // Limpa os nomes dos jogadores da UI
         gameFrame.getGamePanel().getInfoPanel1().setPlayerName(null);
         gameFrame.getGamePanel().getInfoPanel2().setPlayerName(null);
         
-        // Truque de layout: força a janela a recalcular o tamanho máximo (2P)
-        // e depois define o modo visual para 1P (padrão do menu).
         gameFrame.getGamePanel().setMode(GameController.GameMode.TWO_PLAYER);
         gameFrame.packAndCenter(); 
         gameFrame.getGamePanel().setMode(GameController.GameMode.ONE_PLAYER); 
 
-        // Reseta todo o estado da sessão
         currentScreen = GameScreen.MAIN_MENU;
         mainMenuSelection = 0;
         topSoloScores = null; 
         top2PWins = null; 
         allProfiles = null; 
-        
         currentUser = null;
         currentUser2 = null; 
         playerNameInput = "";
-        profileErrorMessage = null; 
+        profileErrorMessage = null;
+        
+        pressedKeys.clear();
+        keyFirstPressTime.clear();
+        keyLastRepeatTime.clear();
     }
 
     /**
-     * Gerencia as teclas de ação durante o jogo (movimento, rotação, etc.).
+     * Lida com todas as ações de jogo (eventos de pressão única E repetição).
      */
-    private void handleGameKeys(int keycode) {
+    private void handleGameAction(int keycode, boolean isFirstPress) {
         
-        // --- Controles Globais ---
-        if (keycode == KeyEvent.VK_T) { // Mudar Tema
-            currentThemeIndex = (currentThemeIndex + 1) % Theme.AVAILABLE_THEMES.length;
-            return;
-        }
-        if (keycode == KeyEvent.VK_G) { // Alternar Peça Fantasma (Ghost Piece)
-            board1.toggleGhostPiece();
-            if (currentGameMode == GameMode.TWO_PLAYER) board2.toggleGhostPiece();
-            return;
-        }
-        if (keycode == KeyEvent.VK_P) { // Pausar
-             currentScreen = GameScreen.PAUSED_MAIN;
-             pauseMenuSelection = 0; 
-             if (backgroundMusic != null) {
-                 backgroundMusic.stopMusic();
-             }
-             return;
+        if (isFirstPress) {
+            if (keycode == KeyEvent.VK_T) { 
+                currentThemeIndex = (currentThemeIndex + 1) % Theme.AVAILABLE_THEMES.length;
+                return;
+            }
+            if (keycode == KeyEvent.VK_G) { 
+                board1.toggleGhostPiece();
+                if (currentGameMode == GameMode.TWO_PLAYER) board2.toggleGhostPiece();
+                return;
+            }
+            if (keycode == KeyEvent.VK_P) { 
+                 currentScreen = GameScreen.PAUSED_MAIN;
+                 pauseMenuSelection = 0; 
+                 if (backgroundMusic != null) {
+                     backgroundMusic.stopMusic();
+                 }
+                 return;
+            }
         }
         
-        // Verifica se o jogador pode se mover (não está em animação de linha)
         boolean p1_canPlay = !board1.isAnimatingLineClear();
         boolean p2_canPlay = (currentGameMode == GameMode.TWO_PLAYER) && !board2.isAnimatingLineClear();
         
         // --- Controles 1P ---
         if (currentGameMode == GameMode.ONE_PLAYER && p1_canPlay) {
             switch (keycode) {
-                case KeyEvent.VK_LEFT: board1.moveLeft(); break;
-                case KeyEvent.VK_RIGHT: board1.moveRight(); break;
+                // Ações de Repetição (DAS/ARR)
+                case KeyEvent.VK_LEFT: 
+                    board1.moveLeft(); 
+                    break;
+                case KeyEvent.VK_RIGHT: 
+                    board1.moveRight(); 
+                    break;
                 case KeyEvent.VK_DOWN:
                     board1.movePieceDown();
-                    lastPieceMoveTime1 = System.currentTimeMillis(); // Reseta o timer de queda
+                    lastPieceMoveTime1 = System.currentTimeMillis(); 
                     break;
-                case KeyEvent.VK_UP: board1.rotateRight(); break;
-                case KeyEvent.VK_Z: board1.rotateLeft(); break;
+                    
+                // Ações de Pressão Única
+                case KeyEvent.VK_UP: 
+                    if (isFirstPress) board1.rotateRight(); 
+                    break;
+                case KeyEvent.VK_Z: 
+                    if (isFirstPress) board1.rotateLeft(); 
+                    break;
                 case KeyEvent.VK_SPACE:
-                    board1.dropDown();
-                    lastPieceMoveTime1 = System.currentTimeMillis(); // Reseta o timer de queda
+                    if (isFirstPress) {
+                        board1.dropDown();
+                        lastPieceMoveTime1 = System.currentTimeMillis(); 
+                    }
                     break;
             }
         }
@@ -752,7 +848,7 @@ public class GameController extends KeyAdapter implements ActionListener {
         // --- Controles 2P ---
         if (currentGameMode == GameMode.TWO_PLAYER) {
             switch (keycode) {
-                // P1 (WASD)
+                // P1 (WASD) - Ações de Repetição
                 case KeyEvent.VK_A: if (p1_canPlay) board1.moveLeft(); break;
                 case KeyEvent.VK_D: if (p1_canPlay) board1.moveRight(); break;
                 case KeyEvent.VK_S: 
@@ -761,15 +857,17 @@ public class GameController extends KeyAdapter implements ActionListener {
                         lastPieceMoveTime1 = System.currentTimeMillis();
                     }
                     break;
-                case KeyEvent.VK_W: if (p1_canPlay) board1.rotateRight(); break;
-                case KeyEvent.VK_Q: if (p1_canPlay) board1.rotateLeft(); break;
+                // P1 (WASD) - Ações de Pressão Única
+                case KeyEvent.VK_W: if (p1_canPlay && isFirstPress) board1.rotateRight(); break;
+                case KeyEvent.VK_Q: if (p1_canPlay && isFirstPress) board1.rotateLeft(); break;
                 case KeyEvent.VK_SPACE: 
-                    if (p1_canPlay) {
+                    if (p1_canPlay && isFirstPress) {
                         board1.dropDown();
                         lastPieceMoveTime1 = System.currentTimeMillis();
                     }
                     break;
-                // P2 (Setas)
+
+                // P2 (Setas) - Ações de Repetição
                 case KeyEvent.VK_LEFT: if (p2_canPlay) board2.moveLeft(); break;
                 case KeyEvent.VK_RIGHT: if (p2_canPlay) board2.moveRight(); break;
                 case KeyEvent.VK_DOWN: 
@@ -778,10 +876,11 @@ public class GameController extends KeyAdapter implements ActionListener {
                         lastPieceMoveTime2 = System.currentTimeMillis();
                     }
                     break;
-                case KeyEvent.VK_UP: if (p2_canPlay) board2.rotateRight(); break;
-                case KeyEvent.VK_M: if (p2_canPlay) board2.rotateLeft(); break;
+                // P2 (Setas) - Ações de Pressão Única
+                case KeyEvent.VK_UP: if (p2_canPlay && isFirstPress) board2.rotateRight(); break;
+                case KeyEvent.VK_M: if (p2_canPlay && isFirstPress) board2.rotateLeft(); break;
                 case KeyEvent.VK_N: 
-                    if (p2_canPlay) {
+                    if (p2_canPlay && isFirstPress) {
                         board2.dropDown();
                         lastPieceMoveTime2 = System.currentTimeMillis();
                     }
@@ -789,6 +888,7 @@ public class GameController extends KeyAdapter implements ActionListener {
             }
         }
     }
+
 
     /**
      * Gerencia a navegação nos menus principais (não-jogo).
@@ -845,16 +945,14 @@ public class GameController extends KeyAdapter implements ActionListener {
                 }
                 break;
                 
-            // Telas "informativas" que só precisam voltar
             case RANKING_SCREEN:
             case RANKING_SCREEN_2P: 
             case RULES_SCREEN:
             case CONTROLS_SCREEN:
                 if (keycode == KeyEvent.VK_ENTER || keycode == KeyEvent.VK_ESCAPE || keycode == KeyEvent.VK_BACK_SPACE) {
-                    // Se estivermos em uma tela de ranking, volta para a seleção de modo de ranking
                     if (currentScreen == GameScreen.RANKING_SCREEN || currentScreen == GameScreen.RANKING_SCREEN_2P) {
                         currentScreen = GameScreen.RANKING_MODE_SELECT;
-                        topSoloScores = null; // Limpa os dados carregados
+                        topSoloScores = null; 
                         top2PWins = null;     
                     } else {
                         currentScreen = GameScreen.MAIN_MENU;
@@ -870,7 +968,6 @@ public class GameController extends KeyAdapter implements ActionListener {
 
     /**
      * Calcula o delay de queda da peça com base no nível atual.
-     * O jogo fica mais rápido (delay menor) a cada nível.
      */
     private int getDelayForLevel(Board board) {
         // Garante que o delay nunca seja menor que 100ms
